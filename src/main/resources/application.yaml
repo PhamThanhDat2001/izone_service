@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: izone-service
+  datasource:
+    url: ${POSTGRES_DATABASE_URL}
+    username: ${POSTGRES_DATABASE_USERNAME}
+    password: ${POSTGRES_DATABASE_PASSWORD}
+  flyway:
+    locations: classpath:/db/migration
+    baseline-on-migrate: true
+    baseline-version: 5
+  jpa:
+    show-sql: true
