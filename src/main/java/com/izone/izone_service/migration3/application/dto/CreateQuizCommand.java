@@ -11,6 +11,10 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CreateQuizCommand {
+
+    @Builder.Default
+    private UUID userId = UUID.fromString("00000000-0000-0000-0000-000000000000");
+
     @Size(max = 255, message = "Name must not exceed 255 characters")
     private String name;
 
@@ -30,7 +34,7 @@ public class CreateQuizCommand {
 
     private List<Long> tagIds;
 
-    private Object  configuration;
+    private Object configuration;
 
     private Long conversionSchemeId;
 

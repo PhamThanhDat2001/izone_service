@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Component
@@ -24,10 +26,11 @@ public class DataMapping {
                                 ? v1Dto.getExercise().getExamTitle()
                                 : "Default Description for " + v1Dto.getExercise().getName()
                 )
+                .userId( UUID.fromString("00000000-0000-0000-0000-000000000000"))
                 .durationInMinutes(
-                        (v1Dto.getExercise().getIeltTime() != null && v1Dto.getExercise().getIeltTime() > 0)
-                                ? v1Dto.getExercise().getIeltTime()
-                                : 1 // @Min(1)
+                        "listening".equalsIgnoreCase(v1Dto.getExercise().getIeltType())
+                                ? 40
+                                : 60
                 )
                 .maxGrade(
                         (v1Dto.getExercise().getMaxScore() != null && v1Dto.getExercise().getMaxScore() > 0)
@@ -38,7 +41,9 @@ public class DataMapping {
                 .quizPages(mapToQuizPages(v1Dto.getParts()))
 
                 .tagIds(Collections.emptyList())
-                .configuration(null) // Sẽ bổ sung nếu có logic map ielt_type
+                .configuration(
+                        buildConfig(v1Dto.getExercise().getIeltType())
+                )
                 .conversionSchemeId(null)
                 .thumbnail(null)
                 .build();
@@ -76,5 +81,30 @@ public class DataMapping {
                         .sort(0) // Bạn có thể thêm logic lấy số thứ tự câu hỏi ở đây
                         .build()
         ).collect(Collectors.toList());
+    }
+
+    private Object buildConfig(String ieltType) {
+        if (ieltType == null) return null;
+
+        String clazz;
+
+        switch (ieltType.toLowerCase()) {
+            case "listening":
+                clazz = "IELTS_LISTENING";
+                break;
+            case "reading":
+                clazz = "IELTS_READING";
+                break;
+            case "writing":
+                clazz = "IELTS_WRITING";
+                break;
+            case "speaking":
+                clazz = "IELTS_SPEAKING";
+                break;
+            default:
+                clazz = "IELTS";
+        }
+
+        return Map.of("clazz", clazz);
     }
 }

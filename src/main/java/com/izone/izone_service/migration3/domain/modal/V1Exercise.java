@@ -47,4 +47,7 @@ public class V1Exercise {
 
     @Column(name = "ielt_type")
     private String ieltType;
+
+    @Column(name = "for_ielt")
+    private Boolean forIelt;
 }

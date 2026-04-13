@@ -5,72 +5,114 @@ import com.izone.izone_service.migration3.application.dto.V1ExerciseDto;
 import com.izone.izone_service.migration3.domain.modal.*;
 import com.izone.izone_service.migration3.domain.repo.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class DataReader {
+
     private final V1ExerciseRepository exerciseRepo;
-    private final V1PartExerciseConnectionRepository partConnectionRepo; // Đã đổi tên Repo
+    private final V1PartExerciseConnectionRepository partConnectionRepo;
     private final V1QuestionPartRepository questionPartRepo;
     private final V1QuestionRepository questionRepo;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     public List<V1ExerciseAggregate> readFullAggregates(int offset, int limit) {
         int page = offset / limit;
-        List<V1Exercise> exercises = exerciseRepo.findAll(PageRequest.of(page, limit)).getContent();
-        if (exercises.isEmpty()) return Collections.emptyList();
 
-        List<Long> exerciseIds = exercises.stream().map(V1Exercise::getId).collect(Collectors.toList());
+        // 1. Lấy exercise
+        List<V1Exercise> exercises =
+                exerciseRepo.findByForIeltTrue(PageRequest.of(page, limit)).getContent();
 
-        // 2. Lấy Connections sử dụng Entity V1PartExerciseConnection mới của bạn
-        // Truy vấn dựa trên trường exercisesId nằm trong @EmbeddedId
-        List<V1PartExerciseConnection> connections = partConnectionRepo.findAllByIdExercisesIdIn(exerciseIds);
+        if (exercises.isEmpty()) {
+            log.warn("No exercises found");
+            return Collections.emptyList();
+        }
 
+        List<Long> exerciseIds = exercises.stream()
+                .map(V1Exercise::getId)
+                .collect(Collectors.toList());
+
+        // 2. Lấy connection
+        List<V1PartExerciseConnection> connections =
+                partConnectionRepo.findAllByIdExercisesIdIn(exerciseIds);
+
+        // OPTIMIZE: group theo exerciseId (tránh O(n²))
+        Map<Long, List<V1PartExerciseConnection>> connectionMap =
+                connections.stream()
+                        .collect(Collectors.groupingBy(c -> c.getId().getExercisesId()));
+
+        // 3. Lấy partIds
         List<Long> partIds = connections.stream()
-                .map(c -> c.getId().getQuestionPartId()) // Lấy từ EmbeddedId
+                .map(c -> c.getId().getQuestionPartId())
                 .distinct()
                 .collect(Collectors.toList());
 
-        // 3. Lấy Parts và Questions
+        // 4. Lấy parts & questions
         List<V1QuestionPart> parts = questionPartRepo.findAllById(partIds);
         List<V1Question> questions = questionRepo.findAllByPartIdIn(partIds);
 
         Map<Long, V1QuestionPart> partMap = parts.stream()
                 .collect(Collectors.toMap(V1QuestionPart::getId, p -> p));
+
         Map<Long, List<V1Question>> questionsByPartMap = questions.stream()
                 .collect(Collectors.groupingBy(V1Question::getPartId));
 
-        // 4. Tổ chức lại dữ liệu vào Aggregate
-        return exercises.stream().map(ex -> {
-            List<V1ExerciseAggregate.V1PartDto> partDtos = connections.stream()
-                    .filter(c -> c.getId().getExercisesId().equals(ex.getId())) // So sánh ID từ EmbeddedId
+        // 5. Build aggregate
+        List<V1ExerciseAggregate> result = exercises.stream().map(ex -> {
+
+            List<V1PartExerciseConnection> exConnections =
+                    connectionMap.getOrDefault(ex.getId(), Collections.emptyList());
+
+            List<V1ExerciseAggregate.V1PartDto> partDtos = exConnections.stream()
                     .map(conn -> {
                         Long pId = conn.getId().getQuestionPartId();
                         V1QuestionPart p = partMap.get(pId);
-                        List<V1Question> qList = questionsByPartMap.getOrDefault(pId, Collections.emptyList());
+                        List<V1Question> qList =
+                                questionsByPartMap.getOrDefault(pId, Collections.emptyList());
 
                         return V1ExerciseAggregate.V1PartDto.builder()
                                 .id(pId)
                                 .title(p != null ? p.getTitle() : "Untitled Part")
                                 .subTitle(p != null ? p.getSubTitle() : "")
                                 .sort(conn.getPartNumber() != null ? conn.getPartNumber() : 0)
-                                .questions(qList.stream().map(q -> V1ExerciseAggregate.V1QuestionDto.builder()
-                                        .id(q.getId())
-                                        .score(q.getScore())
-                                        .build()).collect(Collectors.toList()))
+                                .questions(qList.stream()
+                                        .map(q -> V1ExerciseAggregate.V1QuestionDto.builder()
+                                                .id(q.getId())
+                                                .score(q.getScore())
+                                                .build())
+                                        .collect(Collectors.toList()))
                                 .build();
-                    }).collect(Collectors.toList());
+                    })
+                    .collect(Collectors.toList());
 
             return V1ExerciseAggregate.builder()
                     .exercise(V1ExerciseDto.fromEntity(ex))
                     .parts(partDtos)
                     .build();
+
         }).collect(Collectors.toList());
+
+        // ✅ LOG DATA CUỐI (QUAN TRỌNG)
+        try {
+            String json = objectMapper
+                    .writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(result);
+
+            log.info("\n========== FINAL DATA ==========\n{}\n================================", json);
+
+        } catch (Exception e) {
+            log.error("Error when logging result", e);
+        }
+
+        return result;
     }
 }
