@@ -2,87 +2,58 @@ package com.izone.izone_service.migration3.application.service;
 
 import com.izone.izone_service.migration3.application.dto.CreateQuizCommand;
 import com.izone.izone_service.migration3.application.dto.V1ExerciseAggregate;
+import com.izone.izone_service.migration3.application.service.question.QuestionClient;
+import com.izone.izone_service.migration3.application.service.question.QuestionMapper;
+import com.izone.izone_service.migration3.application.service.quiz.QuizClient;
+import com.izone.izone_service.migration3.application.service.quiz.QuizMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
-import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
-@Service
 @Slf4j
+@Service
 @RequiredArgsConstructor
 public class MigrationOrchestrator {
 
     private final DataReader dataReader;
-    private final DataMapping dataMapping;
-    private final DataWriter dataWriter;
+    private final QuizMapper quizMapper;
+    private final QuizClient quizClient;
+    private final QuestionMapper questionMapper;
+    private final QuestionClient questionClient;
 
     public void migrate() {
-        int offset = 0;
-        int limit = 1;
 
-//        while (true) {
-            List<V1ExerciseAggregate> aggregates =
-                    dataReader.readFullAggregates(offset, limit);
+        List<V1ExerciseAggregate> aggregates =
+                dataReader.readFullAggregates(0, 1);
 
-//            if (aggregates.isEmpty()) break;
+        for (V1ExerciseAggregate agg : aggregates) {
 
-            for (V1ExerciseAggregate agg : aggregates) {
+            // 🔥 1. create ALL questions trước
+            var quizQuestions = agg.getParts().stream()
+                    .flatMap(p -> p.getQuestions().stream())
+                    .map(q -> {
+                        var req = questionMapper.toRequest(q);
+                        Long newId = questionClient.create(req);
 
-                int maxRetries = 3;
-                int attempt = 0;
-                boolean success = false;
+                        return CreateQuizCommand.CreateQuizQuestionCommand.builder()
+                                .questionId(newId)
+                                .weight(q.getScore() != null ? q.getScore().intValue() : 1)
+                                .sort(0)
+                                .build();
+                    })
+                    .collect(Collectors.toList());
 
-                while (!success) {
-                    try {
-                        CreateQuizCommand command =
-                                dataMapping.toCreateQuizCommand(agg);
+            // 🔥 2. build quiz
+            CreateQuizCommand command =
+                    quizMapper.toCreateQuizCommand(agg, quizQuestions);
 
-                        ObjectMapper objectMapper = new ObjectMapper();
-                        String prettyJson = objectMapper
-                                .writerWithDefaultPrettyPrinter()
-                                .writeValueAsString(command);
+            // 🔥 3. call API
+            quizClient.writeQuiz(command);
 
-                        System.out.println("Create Quiz Command:\n" + prettyJson);
-
-                        dataWriter.writeQuiz(command);
-
-                        success = true;
-                        log.info("✅ Migrate thành công Exercise ID: {}",
-                                agg.getExercise().getId());
-
-                    } catch (HttpClientErrorException.Unauthorized e) {
-                        // ❌ 401 → KHÔNG retry vô nghĩa
-                        log.error("❌ Unauthorized (401) - dừng migrate luôn!");
-                        return;
-
-                    } catch (Exception e) {
-                        attempt++;
-
-                        log.warn("⚠️ Lỗi khi migrate Exercise ID: {} | attempt {}/{}",
-                                agg.getExercise().getId(), attempt, maxRetries);
-
-                        if (attempt >= maxRetries) {
-                            log.error("❌ Bỏ qua Exercise ID: {} sau {} lần retry",
-                                    agg.getExercise().getId(), maxRetries);
-                            break;
-                        }
-
-                        // ⏳ Exponential backoff
-                        try {
-                            long delay = 3000L * attempt; // 3s, 6s, 9s
-                            log.info("⏳ Đợi {} ms trước khi retry...", delay);
-                            Thread.sleep(delay);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                        }
-                    }
-                }
-//            }
-
-            offset += limit;
+            log.info("✅ DONE Exercise {}", agg.getExercise().getId());
         }
     }
 }
