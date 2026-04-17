@@ -39,11 +39,36 @@ public class QuestionClient {
 
         Map response = restTemplate.postForObject(URL, request, Map.class);
 
-        Integer id = (Integer) response.get("id");
+        // POST /v1/question-bank-entries trả về QuestionBankEntryViewResult.
+        // Tuy nhiên field "questions" KHÔNG được populate trong response của create()
+        // (lms-service chỉ map entity trực tiếp, chưa fetch versions kèm theo).
+        // → Cần gọi thêm GET /v1/question-bank-entries/{bankEntryId}/versions/1
+        //   để lấy qe_question.id thực sự cần gán vào quiz.
+        Number bankEntryId = (Number) response.get("id");
 
-        log.info("✅ Created question newId={}", id);
+        log.info("Created question bank entry id={}, đang lấy question id...", bankEntryId);
 
-        return id.longValue();
+        // Gọi GET /v1/question-bank-entries/{id}/versions/1
+        // Trả về QuestionWithRelationsResult có field "id" = qe_question.id
+        String versionUrl = URL + "/" + bankEntryId + "/versions/1";
+        Map versionResponse = restTemplate.exchange(
+                versionUrl,
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(buildHeaders()),
+                Map.class
+        ).getBody();
+
+        if (versionResponse == null) {
+            throw new RuntimeException(
+                    "Không lấy được question version cho bankEntryId=" + bankEntryId);
+        }
+
+        // "id" trong QuestionWithRelationsResult = qe_question.id (đây mới là questionId cần dùng)
+        Number questionId = (Number) versionResponse.get("id");
+
+        log.info("✅ Created question: bankEntryId={}, questionId={}", bankEntryId, questionId.longValue());
+
+        return questionId.longValue();
     }
 
     private HttpHeaders buildHeaders() {

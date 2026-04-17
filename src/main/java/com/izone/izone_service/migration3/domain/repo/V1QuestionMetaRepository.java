@@ -18,16 +18,16 @@ public interface V1QuestionMetaRepository extends JpaRepository<V1QuestionMeta, 
      * Batch load de tranh N+1 query problem.
      *
      * @param questionIds danh sach question ID can lay metadata
-     * @return danh sach meta sap xep theo question_id va id
+     * @return danh sach meta sap xep theo questions_id va id
      */
     @Query(
             value =
                     """
-                    SELECT id, question_id, meta_type, answer_score, manual_score, error
+                    SELECT id, questions_id, meta_type, answer_score, manual_score, error
                     FROM api_questionmeta
-                    WHERE question_id IN (:questionIds)
-                    ORDER BY question_id, id ASC
+                    WHERE questions_id IN (:questionIds)
+                    ORDER BY questions_id, id ASC
                     """,
             nativeQuery = true)
-    List<V1QuestionMeta> findByQuestionIdIn(@Param("questionIds") List<Long> questionIds);
+    List<V1QuestionMeta> findByQuestionsIdIn(@Param("questionIds") List<Long> questionIds);
 }

@@ -26,8 +26,8 @@ public class V1QuestionMeta {
     @Column(name = "id")
     private Long id;
 
-    @Column(name = "question_id")
-    private Long questionId;
+    @Column(name = "questions_id")
+    private Long questionsId;
 
     @Column(name = "meta_type")
     private String metaType;

@@ -22,7 +22,7 @@ public class QuizClient {
     public void writeQuiz(CreateQuizCommand command) {
 
         try {
-            // 🔥 LOG REQUEST JSON
+            // LOG REQUEST JSON
             String json = objectMapper
                     .writerWithDefaultPrettyPrinter()
                     .writeValueAsString(command);
@@ -30,7 +30,7 @@ public class QuizClient {
             log.info("\n========== CREATE QUIZ REQUEST ==========\n{}\n=========================================", json);
 
         } catch (Exception e) {
-            log.warn("⚠️ Cannot serialize quiz request", e);
+            log.warn("Cannot serialize quiz request", e);
         }
 
         HttpEntity<CreateQuizCommand> request =
@@ -38,7 +38,7 @@ public class QuizClient {
 
         restTemplate.postForObject(URL, request, Void.class);
 
-        log.info("✅ Quiz created");
+        log.info("Quiz created");
     }
 
     private HttpHeaders buildHeaders() {
