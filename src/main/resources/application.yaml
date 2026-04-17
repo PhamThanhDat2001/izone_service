@@ -2,9 +2,9 @@ spring:
   application:
     name: izone-service
   datasource:
-    url: ${POSTGRES_DATABASE_URL}
-    username: ${POSTGRES_DATABASE_USERNAME}
-    password: ${POSTGRES_DATABASE_PASSWORD}
+    url: jdbc:mysql://10.10.10.9:3306/izone
+    username: root
+    password: izone@20244202
   flyway:
     locations: classpath:/db/migration
     baseline-on-migrate: true

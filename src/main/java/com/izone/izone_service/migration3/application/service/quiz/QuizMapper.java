@@ -62,7 +62,7 @@ public class QuizMapper {
                 .userId(UUID.fromString("00000000-0000-0000-0000-000000000000"))
                 .durationInMinutes(duration)
                 .maxGrade(maxGrade)
-                .quizPages(buildQuizPages(v1Dto.getParts(), questionsByPartId))
+                .quizPages(buildQuizPages(v1Dto.getParts(), questionsByPartId, v1Dto.getExercise().getIeltType()))
                 .tagIds(Collections.emptyList())
                 .configuration(buildQuizConfig(v1Dto.getExercise().getIeltType()))
                 .conversionSchemeId(null)  // Chưa map, cần xác định sau
@@ -76,13 +76,15 @@ public class QuizMapper {
      *
      * <p>Nếu không có part, gom tất cả câu hỏi vào một page chung.
      *
-     * @param parts            danh sách part V1
+     * @param parts             danh sách part V1
      * @param questionsByPartId map partId → danh sách câu hỏi đã tạo trên V2
+     * @param ieltType          loại bài thi (dùng để xác định loại metadata)
      * @return danh sách CreateQuizPageCommand
      */
     private List<CreateQuizCommand.CreateQuizPageCommand> buildQuizPages(
             List<V1ExerciseAggregate.V1PartDto> parts,
-            Map<Long, List<CreateQuizCommand.CreateQuizQuestionCommand>> questionsByPartId) {
+            Map<Long, List<CreateQuizCommand.CreateQuizQuestionCommand>> questionsByPartId,
+            String ieltType) {
 
         // Trường hợp không có part: gom tất cả câu hỏi vào một page mặc định
         if (parts == null || parts.isEmpty()) {
@@ -96,8 +98,8 @@ public class QuizMapper {
                     .description("Auto-generated section")
                     .sort(0)
                     .quizQuestions(allQuestions)
-                    .configMetadata(null)
-                    .scoringMetadata(null)
+                    .configMetadata(buildPageConfigMetadata(ieltType, null))
+                    .scoringMetadata(buildPageScoringMetadata(ieltType, null))
                     .build());
         }
 
@@ -108,10 +110,8 @@ public class QuizMapper {
             List<CreateQuizCommand.CreateQuizQuestionCommand> pageQuestions =
                     questionsByPartId.getOrDefault(part.getId(), Collections.emptyList());
 
-            // Cảnh báo nếu page không có câu hỏi (có thể do lỗi tạo question)
+            // Page rỗng sẽ vi phạm validation @NotEmpty → bỏ qua
             if (pageQuestions.isEmpty()) {
-                // Tạo page với danh sách rỗng sẽ vi phạm validation @NotEmpty
-                // → log cảnh báo, không thêm page này vào danh sách
                 return null;
             }
 
@@ -121,13 +121,116 @@ public class QuizMapper {
                     .description(part.getSubTitle() != null
                             ? part.getSubTitle() : "")
                     .sort(part.getSort() != null ? part.getSort() : 0)
-                    .quizQuestions(pageQuestions)  // Chỉ câu hỏi thuộc ĐÚNG part này
-                    .configMetadata(null)
-                    .scoringMetadata(null)
+                    .quizQuestions(pageQuestions)
+                    .configMetadata(buildPageConfigMetadata(ieltType, part))
+                    .scoringMetadata(buildPageScoringMetadata(ieltType, part))
                     .build();
         })
-        .filter(Objects::nonNull)  // Loại bỏ page rỗng
+        .filter(Objects::nonNull)
         .collect(Collectors.toList());
+    }
+
+    /**
+     * Build configMetadata cho quiz page theo loại IELTS.
+     * V2 dùng "clazz" để deserialize đúng subtype của QuizPageConfigMetadata.
+     *
+     * <p>Mapping:
+     * <ul>
+     *   <li>listening → IELTS_LISTENING: { clazz, audioFile: null }
+     *   <li>reading   → IELTS_READING:   { clazz, passage: subTitle, referenceQuestionId: null }
+     *   <li>writing   → IELTS_WRITING:   { clazz }
+     *   <li>speaking  → IELTS_SPEAKING:  { clazz }
+     * </ul>
+     *
+     * @param ieltType loại bài thi từ V1
+     * @param part     DTO của part (dùng để lấy passage cho reading)
+     * @return Map JSON configMetadata
+     */
+    private Object buildPageConfigMetadata(String ieltType, V1ExerciseAggregate.V1PartDto part) {
+        if (ieltType == null || ieltType.isBlank()) return null;
+
+        Map<String, Object> config = new LinkedHashMap<>();
+        switch (ieltType.toLowerCase().trim()) {
+            case "listening":
+                // IeltsListeningPageConfigMetadata: audioFile (chưa có data từ V1, để null)
+                config.put("clazz", "IELTS_LISTENING");
+                config.put("audioFile", null);
+                break;
+
+            case "reading":
+                // IeltsReadingPageConfigMetadata: passage lấy từ subTitle của part
+                // (subTitle thường chứa nội dung đoạn văn reading)
+                config.put("clazz", "IELTS_READING");
+                config.put("passage", part != null ? part.getSubTitle() : null);
+                config.put("referenceQuestionId", null);
+                break;
+
+            case "writing":
+                // IeltsWritingPageConfigMetadata: không có field thêm
+                config.put("clazz", "IELTS_WRITING");
+                break;
+
+            case "speaking":
+                // IeltsSpeakingPageConfigMetadata: không có field thêm
+                config.put("clazz", "IELTS_SPEAKING");
+                break;
+
+            default:
+                config.put("clazz", "DEFAULT");
+                break;
+        }
+        return config;
+    }
+
+    /**
+     * Build scoringMetadata cho quiz page theo loại IELTS.
+     * V2 dùng "clazz" để deserialize đúng subtype của QuizPageScoringMetadata.
+     *
+     * <p>Mapping:
+     * <ul>
+     *   <li>listening → IELTS_LISTENING: { clazz, reviewPassage: null, gradeItemAudioTimestampInMsMap: null }
+     *   <li>reading   → IELTS_READING:   { clazz, reviewPassage: null }
+     *   <li>writing   → IELTS_WRITING:   { clazz }
+     *   <li>speaking  → IELTS_SPEAKING:  { clazz }
+     * </ul>
+     *
+     * @param ieltType loại bài thi từ V1
+     * @param part     DTO của part (tham khảo, hiện chưa dùng)
+     * @return Map JSON scoringMetadata
+     */
+    private Object buildPageScoringMetadata(String ieltType, V1ExerciseAggregate.V1PartDto part) {
+        if (ieltType == null || ieltType.isBlank()) return null;
+
+        Map<String, Object> scoring = new LinkedHashMap<>();
+        switch (ieltType.toLowerCase().trim()) {
+            case "listening":
+                // IeltsListeningPageScoringMetadata: reviewPassage và timestamp map (chưa có từ V1)
+                scoring.put("clazz", "IELTS_LISTENING");
+                scoring.put("reviewPassage", null);
+                scoring.put("gradeItemAudioTimestampInMsMap", null);
+                break;
+
+            case "reading":
+                // IeltsReadingPageScoringMetadata: reviewPassage (chưa có từ V1)
+                scoring.put("clazz", "IELTS_READING");
+                scoring.put("reviewPassage", null);
+                break;
+
+            case "writing":
+                // IeltsWritingPageScoringMetadata: không có field thêm
+                scoring.put("clazz", "IELTS_WRITING");
+                break;
+
+            case "speaking":
+                // IeltsSpeakingPageScoringMetadata: không có field thêm
+                scoring.put("clazz", "IELTS_SPEAKING");
+                break;
+
+            default:
+                scoring.put("clazz", "DEFAULT");
+                break;
+        }
+        return scoring;
     }
 
     /**
